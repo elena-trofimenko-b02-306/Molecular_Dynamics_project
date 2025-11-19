@@ -39,17 +39,17 @@ public:
     Vector3D r;           // Позиция 
     Vector3D v; // Скорость   
     Vector3D Grad; // градиент потенциала 
-    double m = 1; // Масса частицы в граммах   
+    double m = 40.0; // Масса частицы в а.е.м   
 
 };
 
 class System {
     
-    const double box_size = 1;      //в мм
-    const double dt = 0.01;        //длина шага по времени в секундах
-    const unsigned int N = 100;    // число частиц 
-    double epsilon = 1;
-    double sigma = 1;   
+    const double box_size = 3.4;      //в нм
+    const double dt = 1;         //длина шага по времени в пикосекундах
+    const unsigned int N = 980;    // число частиц 
+    double epsilon = 1.2e-2;       // в нм^2*а.е.м/пс^2
+    double sigma = 0.34;   // в нм 
 
 public:
     std::vector<Particle> particles {N};
@@ -71,7 +71,7 @@ private:
     { 
         for(unsigned int i = 0; i < N; i++)
         {   
-            double x = random_double(-box_size / 2, box_size / 2);
+            double x = random_double(-box_size / 2, box_size /2);
             double y = random_double(-box_size / 2, box_size / 2);
             double z = random_double(-box_size / 2, box_size / 2);
             Vector3D r_ = Vector3D(x, y, z);
@@ -83,21 +83,23 @@ private:
     double calculate_coordinate_of_substance(double x1, double x2)
     {  // считаем разность между координатами частицы с учетом периодических граничных условий
 
-        if (x2 >= x1)
-        {
-            if(x2 - x1 >= box_size / 2)
-                return x2 - x1;
-            else
-                return -(box_size - x2 + x1);
-        }
-        else
-        {
-            if(x2 - x1 <= -box_size / 2)
-                return box_size - x1 + x2;
-            else    
-                return x2 - x1;
-        }
-
+        //if (x2 >= x1)
+        //{
+           // if(x2 - x1 >= box_size / 2)
+              //  return x2 - x1;
+           // else
+               // return -(box_size - x2 + x1);
+      //  }
+        //else
+       // {
+            //if(x2 - x1 <= -box_size / 2)
+               // return box_size - x1 + x2;
+            //else    
+                //return x2 - x1;
+        //}
+        double dx = x2 - x1;
+        dx -= box_size*std::round(dx/box_size); 
+        return dx;
 
     }
     
@@ -114,24 +116,26 @@ private:
     Vector3D calculate_gradient(Particle p1, Particle p2) //считаем силу как градиент потенциала
     {
         Vector3D r = calculate_vect_of_substance(p2, p1); //именно в таком порядке
-        double r_abs = sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-        return r * 24 * epsilon * (2 * pow(sigma / r_abs, 12) / r_abs + pow(sigma / r_abs, 6) / r_abs);  //возвращает градиент потенциала от частицы 2 к частице 1
+        double r_abs = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
+        if((r_abs > 3 * sigma)||(r_abs < 1e-10)) return Vector3D(0,0,0);
+        double sr = sigma/r_abs;
+        double sr6 = sr * sr * sr * sr * sr * sr;  // (σ/r)^6
+        double sr12 = sr6 * sr6;
+        Vector3D r_norm = r*(1/r_abs);
+        return r_norm*(24 * epsilon * (2 * sr12 - sr6) / r_abs) ;  //возвращает градиент потенциала от частицы 2 к частице 1
 
 
 
     }
     
     double periodic_conditions_on_coordinats(double x)
-    {
-        if(x > box_size / 2) 
+    {   
+        x += box_size / 2;
+        if((x  > box_size) || (x < 0))
         {
-            return x -box_size;
+            x -= (floor(x / box_size)) * box_size;
         }
-        else if (x < -box_size / 2)
-        {
-            return x + box_size;
-        }
-        else return x;
+        return x - box_size / 2;
     }
     
     Vector3D periodic_conditions_on_vect(Vector3D r)
@@ -153,9 +157,9 @@ public:
             
         }
         for(unsigned int i = 0; i < N; i++)
-        {
-            particles[i].r = particles[i].r + particles[i].v * dt + Gradients[i] * (-dt * dt / 2 * particles[i].m);
-            particles[i].v = particles[i].v + Gradients[i] * (-dt);
+        {   particles[i].Grad = Gradients[i];
+            particles[i].r = particles[i].r + particles[i].v * dt + Gradients[i] * (-dt * dt / (2 * particles[i].m));
+            particles[i].v = particles[i].v + Gradients[i] * (-dt/particles[i].m);
             particles[i].r = periodic_conditions_on_vect(particles[i].r);
         }
     }
@@ -164,11 +168,12 @@ public:
 int main()
 {   
     System system = System();
-    unsigned int N_iter = 100000;
+    unsigned int N_iter = 1000;
     std::cout << system.particles[0].r.x ;
-    for(unsigned int i = 1; i < N_iter; i++)
+    for(unsigned int i = 0; i < N_iter; i++)
     {
         system.verlet_scheme_iteration();
+        
         std::cout << i << std::endl;
 
     }
@@ -184,7 +189,7 @@ int main()
     }
     
     // Запись данных в файл
-    for(unsigned int i = 0; i < 100; i++)
+    for(unsigned int i = 0; i < 980; i++)
     {
         outfile << system.particles[i].v.x << " " << std::endl;
     }
