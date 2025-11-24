@@ -39,17 +39,21 @@ public:
     Vector3D r;           // Позиция 
     Vector3D v; // Скорость   
     Vector3D Grad; // градиент потенциала 
-    double m = 40.0; // Масса частицы в а.е.м   
+    double m = 1; // Масса частицы в а.е.м   
 
 };
 
 class System {
     
-    const double box_size = 3.4;      //в нм
-    const double dt = 1;         //длина шага по времени в пикосекундах
-    const unsigned int N = 980;    // число частиц 
-    double epsilon = 1.2e-2;       // в нм^2*а.е.м/пс^2
-    double sigma = 0.34;   // в нм 
+    const double box_size = 10;      //работаем в приведенных единицах
+    const double dt = 0.01;        
+    const unsigned int N = 100;
+        
+    const double epsilon = 1;       
+    const double sigma = 1;  
+    const double tau = 1;
+    const double T_target = 1.7;
+
 
 public:
     std::vector<Particle> particles {N};
@@ -71,7 +75,7 @@ private:
     { 
         for(unsigned int i = 0; i < N; i++)
         {   
-            double x = random_double(-box_size / 2, box_size /2);
+            double x = random_double(-box_size / 2, box_size / 2);
             double y = random_double(-box_size / 2, box_size / 2);
             double z = random_double(-box_size / 2, box_size / 2);
             Vector3D r_ = Vector3D(x, y, z);
@@ -117,7 +121,7 @@ private:
     {
         Vector3D r = calculate_vect_of_substance(p2, p1); //именно в таком порядке
         double r_abs = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-        if((r_abs > 3 * sigma)||(r_abs < 1e-10)) return Vector3D(0,0,0);
+        if((r_abs > 3 * sigma)||(r_abs < 1e-16)) return Vector3D(0,0,0);
         double sr = sigma/r_abs;
         double sr6 = sr * sr * sr * sr * sr * sr;  // (σ/r)^6
         double sr12 = sr6 * sr6;
@@ -142,7 +146,24 @@ private:
     {   
         return Vector3D(periodic_conditions_on_coordinats(r.x), periodic_conditions_on_coordinats(r.y), periodic_conditions_on_coordinats(r.z));
     }
-public:   
+    double calculate_temperature()
+    {   
+        double E_kin = 0;
+        for(unsigned int i = 0;i < N;i++ )
+        {   
+            double sq_v_abs = particles[i].v.x * particles[i].v.x + particles[i].v.y * particles[i].v.y + particles[i].v.z * particles[i].v.z;
+            E_kin += sq_v_abs*particles[i].m/2;
+        }
+        return 2 * E_kin / (3 * N - 3);
+    }
+    Vector3D berendsen_termostat_vector(Vector3D V)
+    {
+        double lambda = sqrt(1 + (dt/tau)*(T_target/calculate_temperature()-1));
+        return V*lambda;
+    }  
+
+public: 
+ 
     void verlet_scheme_iteration()
     {   
         std::vector<Vector3D> Gradients{N}; //массив градиентов для вспех частиц
@@ -163,37 +184,53 @@ public:
             particles[i].r = periodic_conditions_on_vect(particles[i].r);
         }
     }
+    void berendsen_termostat()
+    {
+        for(unsigned i = 0; i < N; i++)
+        {
+            particles[i].v = berendsen_termostat_vector(particles[i].v);
+        }
+    }
 };
 
 int main()
 {   
-    System system = System();
+    const double N_termostat = 1000;
     unsigned int N_iter = 1000;
-    std::cout << system.particles[0].r.x ;
-    for(unsigned int i = 0; i < N_iter; i++)
-    {
-        system.verlet_scheme_iteration();
-        
-        std::cout << i << std::endl;
-
-    }
+    System system = System();
     std::ofstream outfile;
-    
-    // Открытие файла для записи
     outfile.open("output.txt");
-    
-    // Проверка, успешно ли открылся файл
+    std::cout << system.particles[0].r.x ;
     if (!outfile.is_open()) {
         std::cerr << "Ошибка открытия файла!" << std::endl;
         return 1;
     }
+    for(unsigned int i = 0; i < N_iter; i++)
+    {  
+        system.verlet_scheme_iteration();
+        if (i==0)
+        {
+           
+        }
+
+        if (i<N_termostat)
+        {
+            system.berendsen_termostat();
+        }
+        
+        std::cout << i << std::endl;
+
+    }
     
     // Запись данных в файл
-    for(unsigned int i = 0; i < 980; i++)
-    {
-        outfile << system.particles[i].v.x << " " << std::endl;
-    }
-    // Закрытие файла
-    outfile.close();
+             // Запись данных в файл
+    for(unsigned int j = 0; j <100 ; j++)
+        {
+            outfile << system.particles[j].v.x << " " << std::endl;
+        }
+    outfile.close();   
+    
+
+   
     return 0;
 }
