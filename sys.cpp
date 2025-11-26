@@ -46,8 +46,8 @@ public:
 class System {
     
     const double box_size = 10;      //работаем в приведенных единицах
-    const double dt = 0.01;        
-    const unsigned int N = 100;
+    const double dt = 0.001;        
+    const unsigned int N = 512;
         
     const double epsilon = 1;       
     const double sigma = 1;  
@@ -73,34 +73,24 @@ private:
 
     void generate_particles()
     { 
-        for(unsigned int i = 0; i < N; i++)
-        {   
-            double x = random_double(-box_size / 2, box_size / 2);
-            double y = random_double(-box_size / 2, box_size / 2);
-            double z = random_double(-box_size / 2, box_size / 2);
-            Vector3D r_ = Vector3D(x, y, z);
-            particles[i].r = r_;
-            particles[i].v = Vector3D(0, 0, 0);
-        }
-
-    }
+        unsigned int number = 0;
+        double x,y,z;
+        double cube_size = box_size/8;
+        for(unsigned int i = 0; i < 8; i++)
+        {  
+            for(unsigned int j = 0; j < 8; j++)
+            {
+                for(unsigned int k = 0; k < 8; k++)
+                {
+                    x = cube_size/2 + i*cube_size;
+                    y = cube_size/2 + j*cube_size;              //решетчатая инициализация начальных положений
+                    z = cube_size/2 + k*cube_size;
+                    particles[number].r = Vector3D(x,y,z);
+                    particles[number].v = Vector3D(0,0,0);
+                    number++;
+            }}}}
     double calculate_coordinate_of_substance(double x1, double x2)
-    {  // считаем разность между координатами частицы с учетом периодических граничных условий
-
-        //if (x2 >= x1)
-        //{
-           // if(x2 - x1 >= box_size / 2)
-              //  return x2 - x1;
-           // else
-               // return -(box_size - x2 + x1);
-      //  }
-        //else
-       // {
-            //if(x2 - x1 <= -box_size / 2)
-               // return box_size - x1 + x2;
-            //else    
-                //return x2 - x1;
-        //}
+    {
         double dx = x2 - x1;
         dx -= box_size*std::round(dx/box_size); 
         return dx;
@@ -116,87 +106,136 @@ private:
         return dr;
         
     }
+    Vector3D calculate_gradient(Particle p1, Particle p2)
+{
+    Vector3D r = calculate_vect_of_substance(p2, p1);
+    double r_sq = r.x*r.x + r.y*r.y + r.z*r.z;
     
-    Vector3D calculate_gradient(Particle p1, Particle p2) //считаем силу как градиент потенциала
-    {
-        Vector3D r = calculate_vect_of_substance(p2, p1); //именно в таком порядке
-        double r_abs = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
-        if((r_abs > 3 * sigma)||(r_abs < 1e-16)) return Vector3D(0,0,0);
-        double sr = sigma/r_abs;
-        double sr6 = sr * sr * sr * sr * sr * sr;  // (σ/r)^6
-        double sr12 = sr6 * sr6;
-        Vector3D r_norm = r*(1/r_abs);
-        return r_norm*(24 * epsilon * (2 * sr12 - sr6) / r_abs) ;  //возвращает градиент потенциала от частицы 2 к частице 1
-
-
-
-    }
     
-    double periodic_conditions_on_coordinats(double x)
-    {   
-        x += box_size / 2;
-        if((x  > box_size) || (x < 0))
-        {
-            x -= (floor(x / box_size)) * box_size;
-        }
-        return x - box_size / 2;
-    }
+    if(std::sqrt(r_sq) < 1e-10) return Vector3D(0,0,0);  // защита от деления на 0
+    if(r_sq > 9 * sigma * sigma) return Vector3D(0,0,0);  // обрезание
+    
+    double r_abs = std::sqrt(r_sq);
+    double inv_r = 1.0 / r_abs;
+    
+    double sr = sigma * inv_r;
+    double sr6 = sr * sr * sr;  // (σ/r)³
+    sr6 = sr6 * sr6;            // (σ/r)⁶
+    double sr12 = sr6 * sr6;    // (σ/r)¹²
+    
+    double force_mag = 24 * epsilon * (2 * sr12 - sr6) * inv_r;
+    
+    return r * (force_mag * inv_r);
+}
+    
+    
+   double periodic_conditions_on_coordinats(double x)
+{   
+    x = std::fmod(x + box_size/2, box_size);
+    if (x < 0) x += box_size;
+    return x - box_size/2;
+}
     
     Vector3D periodic_conditions_on_vect(Vector3D r)
     {   
         return Vector3D(periodic_conditions_on_coordinats(r.x), periodic_conditions_on_coordinats(r.y), periodic_conditions_on_coordinats(r.z));
     }
-    double calculate_temperature()
+   
+     
+   double calculate_temperature()
+{   
+    // Сначала удаляем движение центра масс
+    remove_center_of_mass_motion();
+    
+    double E_kin = 0;
+    for(unsigned int i = 0; i < N; i++)
     {   
-        double E_kin = 0;
-        for(unsigned int i = 0;i < N;i++ )
-        {   
-            double sq_v_abs = particles[i].v.x * particles[i].v.x + particles[i].v.y * particles[i].v.y + particles[i].v.z * particles[i].v.z;
-            E_kin += sq_v_abs*particles[i].m/2;
-        }
-        return 2 * E_kin / (3 * N - 3);
+        double sq_v_abs = particles[i].v.x * particles[i].v.x 
+                        + particles[i].v.y * particles[i].v.y 
+                        + particles[i].v.z * particles[i].v.z;
+        E_kin += sq_v_abs * particles[i].m / 2;
     }
-    Vector3D berendsen_termostat_vector(Vector3D V)
-    {
-        double lambda = sqrt(1 + (dt/tau)*(T_target/calculate_temperature()-1));
-        return V*lambda;
-    }  
+    
+    // Число степеней свободы: 3N - 3 (после удаления v_cm)
+    return 2 * E_kin / (3 * N - 3);
+}
 
+void remove_center_of_mass_motion()
+{
+    Vector3D v_cm(0,0,0);
+    double total_mass = 0;
+    
+    // Вычисляем скорость центра масс
+    for(unsigned int i = 0; i < N; i++) {
+        v_cm = v_cm + particles[i].v * particles[i].m;
+        total_mass += particles[i].m;
+    }
+    v_cm = v_cm * (1.0 / total_mass);
+    
+    // Вычитаем скорость центра масс
+    for(unsigned int i = 0; i < N; i++) {
+        particles[i].v = particles[i].v + v_cm*(-1);
+    }
+}
 public: 
+void apply_berendsen_thermostat()
+{
+    double T_current = calculate_temperature();
+    
+    // Защита от деления на ноль и отрицательных температур
+    if(T_current <= 0) return;
+    
+    double lambda = sqrt(1 + (dt/tau) * (T_target/T_current - 1));
+    
+    // Применяем ко всем частицам
+    for(unsigned int i = 0; i < N; i++) {
+        particles[i].v = particles[i].v * lambda;
+    }
+}
+
+
  
-    void verlet_scheme_iteration()
-    {   
-        std::vector<Vector3D> Gradients{N}; //массив градиентов для вспех частиц
-        for(unsigned int i = 0; i < N; i++)
-        {   
-            for(unsigned int j = 0; j < N; j++)
-            { 
-                if(i == j) continue;
-                Gradients[i] = Gradients[i] + calculate_gradient(particles[i], particles[j]);
-            }
-            
-            
-        }
-        for(unsigned int i = 0; i < N; i++)
-        {   particles[i].Grad = Gradients[i];
-            particles[i].r = particles[i].r + particles[i].v * dt + Gradients[i] * (-dt * dt / (2 * particles[i].m));
-            particles[i].v = particles[i].v + Gradients[i] * (-dt/particles[i].m);
-            particles[i].r = periodic_conditions_on_vect(particles[i].r);
-        }
+   
+   void verlet_scheme_iteration()
+{   
+    // Сохраняем старые силы
+    std::vector<Vector3D> old_forces(N);
+    for(unsigned i = 0; i < N; i++) {
+        old_forces[i] = particles[i].Grad;
     }
-    void berendsen_termostat()
-    {
-        for(unsigned i = 0; i < N; i++)
-        {
-            particles[i].v = berendsen_termostat_vector(particles[i].v);
-        }
+    
+    
+    for(unsigned i = 0; i < N; i++) {
+        particles[i].r = particles[i].r + particles[i].v * dt 
+                       + old_forces[i] * (dt * dt / (2 * particles[i].m));
+        particles[i].r = periodic_conditions_on_vect(particles[i].r);
     }
+    
+    
+    std::vector<Vector3D> new_forces(N, Vector3D(0,0,0));
+    for(unsigned i = 0; i < N; i++) {
+        for(unsigned j = i + 1; j < N; j++) { // Оптимизация: j = i+1
+            Vector3D force_ij = calculate_gradient(particles[i], particles[j]);
+            new_forces[i] = new_forces[i] + force_ij;
+            new_forces[j] = new_forces[j] + force_ij*(-1); // 3-й закон Ньютона
+        }
+        particles[i].Grad = new_forces[i];
+    }
+    
+    
+    for(unsigned i = 0; i < N; i++) {
+        particles[i].v = particles[i].v + (old_forces[i] + new_forces[i]) 
+                       * (dt / (2 * particles[i].m));
+    }
+}
 };
+   
+
 
 int main()
 {   
     const double N_termostat = 1000;
-    unsigned int N_iter = 1000;
+    unsigned int N_iter = 5000;
     System system = System();
     std::ofstream outfile;
     outfile.open("output.txt");
@@ -215,7 +254,7 @@ int main()
 
         if (i<N_termostat)
         {
-            system.berendsen_termostat();
+            system.apply_berendsen_thermostat();
         }
         
         std::cout << i << std::endl;
@@ -224,9 +263,9 @@ int main()
     
     // Запись данных в файл
              // Запись данных в файл
-    for(unsigned int j = 0; j <100 ; j++)
+    for(unsigned int j = 0; j <512 ; j++)
         {
-            outfile << system.particles[j].v.x << " " << std::endl;
+            outfile << system.particles[j].v.z << " " << std::endl;
         }
     outfile.close();   
     
