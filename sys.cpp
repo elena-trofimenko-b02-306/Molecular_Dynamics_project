@@ -62,6 +62,8 @@ class System {
     const double tau = 1;
     const double T_target = 1.7;
     std::ofstream velocity_coord_file;
+    std::ofstream velocity_module_file;
+    std::ofstream energy_file;
 
     std::vector<Particle> particles {N};
 
@@ -75,10 +77,25 @@ public:
             std::cerr << "Ошибка открытия файла!" << std::endl;
             
         }
+        velocity_module_file.open("velocity_module.txt");
+        if (!velocity_module_file.is_open()) 
+        {
+            std::cerr << "Ошибка открытия файла!" << std::endl;
+            
+        }
+        energy_file.open("energy.txt");
+        if (!energy_file.is_open()) 
+        {
+            std::cerr << "Ошибка открытия файла!" << std::endl;
+            
+        }
+
+
     }
     ~System()
     {
-        velocity_coord_file.close();  
+        velocity_coord_file.close(); 
+        velocity_module_file.close();
     }
 
 private:    
@@ -123,24 +140,31 @@ private:
         dr.z = calculate_coordinate_of_substance(p1.r.z, p2.r.z);
         return dr;
     }
-
-    Vector3D calculate_gradient(Particle p1, Particle p2)
+    std::vector<double> calculate_sr6(Vector3D r)
     {
-        Vector3D r = calculate_vect_of_substance(p2, p1);
+        
         double r_sq = r.x * r.x + r.y * r.y + r.z * r.z;
         
         if(std::sqrt(r_sq) < 1e-10) 
-            return Vector3D(0, 0, 0);  // защита от деления на 0
+            return {0,0};  // защита от деления на 0
         if(r_sq > 9 * sigma * sigma) 
-            return Vector3D(0, 0, 0);  // обрезание
+            return {0,0};  // обрезание
         
         double r_abs = std::sqrt(r_sq);
         double inv_r = 1.0 / r_abs;
         double sr = sigma * inv_r;
-        double sr6 = std::pow(sr, 6);  // (σ/r)⁶
+        return {std::pow(sr, 6),inv_r};
+
+    }
+
+    Vector3D calculate_gradient(Particle p1, Particle p2)
+    {   
+        Vector3D r = calculate_vect_of_substance(p2, p1);
+        std::vector<double> sr_6 = calculate_sr6(r);
+        double sr6 = sr_6[0];  // (σ/r)⁶
         double sr12 = sr6 * sr6;    // (σ/r)¹²
-        double force_mag = 24 * epsilon * (2 * sr12 - sr6) * inv_r;
-        return r * (force_mag * inv_r);
+        double force_mag = 24 * epsilon * (2 * sr12 - sr6) * sr_6[1];
+        return r * (force_mag * sr_6[1]);
     }
     
     
@@ -246,6 +270,55 @@ public:
                               (dt / (2 * particles[i].m));
         }
     }
+   
+    double calculate_potential(Particle p1,Particle p2) //потенциал взаимодействия двух частиц
+    {
+        Vector3D r = calculate_vect_of_substance(p1, p2);
+        return 4 * epsilon * (std::pow(calculate_sr6(r)[0],2) - calculate_sr6(r)[0]);
+    }
+    
+    double calculate_potential_of_system()   //потенциал системы
+    {
+        double U = 0;
+        for(unsigned int i = 0;i < 512; i++)
+            for(unsigned int j = i + 1; j < 512; j++)
+            {   
+                U += calculate_potential(particles[i], particles[j]);
+            }
+        return U;
+    }
+    double calculate_E_kin(Particle p)  //кинетическая энергия одной частицы
+    {
+        double v_sq = p.v.x * p.v.x +
+                      p.v.y * p.v.y + 
+                      p.v.z * p.v.z;
+        return p.m*v_sq/2;
+    }
+    double calculate_E_kin() //кинетическая энергия системы
+    {
+        double E_kin = 0;
+        
+        for(unsigned int i = 0; i < 512; i++)
+        {   
+            E_kin += calculate_E_kin(particles[i]);
+        }
+        return E_kin;
+    }
+    
+    double calculate_energy() // эта функция вычисляет энергию системы
+    {
+        return calculate_E_kin() + calculate_potential_of_system();
+    }
+        
+    void write_energy_to_file()
+    {
+        if(!energy_file.is_open())
+            return;
+            
+        energy_file << calculate_energy() << " " << std::endl;
+        
+    }
+    
     void write_velocity_coordinate_to_file()
     {
         if(!velocity_coord_file.is_open())
@@ -256,6 +329,26 @@ public:
             velocity_coord_file << particles[j].v.x  << " " << std::endl;
         }
     }
+    
+    void write_velocity_module_to_file()
+    {
+        if(!velocity_module_file.is_open())
+            return;
+            
+        for(unsigned int j = 0; j < 512 ; j++)
+        {
+            velocity_module_file << std::sqrt(particles[j].v.x * particles[j].v.x + 
+                                   particles[j].v.y * particles[j].v.y + 
+                                   particles[j].v.z * particles[j].v.z)  << " " << std::endl;
+        }
+    }
+    void write_everything_to_file()
+    {
+        write_energy_to_file();
+        write_velocity_coordinate_to_file();
+        write_velocity_module_to_file();
+    }
+
 };
    
 
@@ -274,10 +367,10 @@ int main()
         {
             system.apply_berendsen_thermostat();
         }
-        if((i % 5000 == 0) && (i > N_termostat))
+        if((i % 100 == 0) && (i > N_termostat))
         {
             std::cout << i << std::endl;
-            system.write_velocity_coordinate_to_file();
+            system.write_everything_to_file();
         }
 
     }
