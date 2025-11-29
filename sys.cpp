@@ -45,10 +45,12 @@ Vector3D operator+(const Vector3D& v1, const Vector3D& v2)
 class Particle
 {
 public:
+    Vector3D r0;            // позиция в нулевой момент времени(для среднеквадратичного смещения)
+    Vector3D R;            // позиция без учета периодических граничных условий
     Vector3D r;           // Позиция 
-    Vector3D v; // Скорость   
-    Vector3D Grad; // градиент потенциала 
-    double m = 1; // Масса частицы в а.е.м   
+    Vector3D v;          // Скорость   
+    Vector3D Grad;      // градиент потенциала 
+    double m = 1;      // Масса частицы в а.е.м   
 };
 
 class System {
@@ -59,11 +61,12 @@ class System {
         
     const double epsilon = 1;       
     const double sigma = 1;  
-    const double tau = 1;
-    const double T_target = 1.7;
+    const double tau = 0.1;
+    const double T_target = 3;
     std::ofstream velocity_coord_file;
     std::ofstream velocity_module_file;
     std::ofstream energy_file;
+    std::ofstream mean_square_offset_file;
 
     std::vector<Particle> particles {N};
 
@@ -89,6 +92,14 @@ public:
             std::cerr << "Ошибка открытия файла!" << std::endl;
             
         }
+        mean_square_offset_file.open("mean_square_offset.txt");
+        if (!mean_square_offset_file.is_open()) 
+        {
+            std::cerr << "Ошибка открытия файла!" << std::endl;
+            
+        }
+
+
 
 
     }
@@ -119,7 +130,7 @@ private:
                     x = cube_size / 2 + i * cube_size;
                     y = cube_size / 2 + j * cube_size;              //решетчатая инициализация начальных положений
                     z = cube_size / 2 + k * cube_size;
-                    particles[number].r = Vector3D(x, y, z);
+                    particles[number].r = particles[number].r0 = particles[number].R = Vector3D(x, y, z);
                     particles[number].v = Vector3D(0, 0, 0);
                     number++;
                 }
@@ -246,8 +257,13 @@ public:
         
         for(unsigned i = 0; i < N; i++) 
         {
-            particles[i].r = particles[i].r + particles[i].v * dt +
-                             old_gradients[i] * (dt * dt / (2 * particles[i].m));
+            particles[i].r += particles[i].v * dt +
+                             old_gradients[i] * (dt * dt / (2 * particles[i].m)); 
+            particles[i].R += particles[i].v * dt +
+                              old_gradients[i] * (dt * dt / (2 * particles[i].m));
+                                                                                   /*для R не применяем граничных условий
+                                                                                    R нигде не используется, 
+                                                                                    кроме поиска среднеквадратичного смещения*/
             particles[i].r = periodic_conditions_on_vect(particles[i].r);
         }
         
@@ -309,6 +325,20 @@ public:
     {
         return calculate_E_kin() + calculate_potential_of_system();
     }
+    double calculate_mean_square_offset()
+    {
+        double square_offset = 0;
+        Vector3D delta_R;
+        for(unsigned int i = 0; i < 512; i++)
+        {
+            delta_R = particles[i].r0 + particles[i].R*(-1);
+            square_offset += std::pow(delta_R.x,2) + 
+                                  std::pow(delta_R.y,2) +
+                                  std::pow(delta_R.z,2);
+        }
+        return square_offset/512;
+
+    }
         
     void write_energy_to_file()
     {
@@ -342,11 +372,21 @@ public:
                                    particles[j].v.z * particles[j].v.z)  << " " << std::endl;
         }
     }
+
+    
+    void write_mean_square_offset_to_file()    
+    {
+        if(!mean_square_offset_file.is_open())
+            return;
+            
+        mean_square_offset_file << calculate_mean_square_offset()  << " " << std::endl;
+    }
     void write_everything_to_file()
     {
         write_energy_to_file();
         write_velocity_coordinate_to_file();
         write_velocity_module_to_file();
+        write_mean_square_offset_to_file();
     }
 
 };
@@ -356,10 +396,11 @@ public:
 int main()
 {   
     const double N_termostat = 1000;
-    unsigned int N_iter = 10000;
-    System system = System();
+    unsigned int N_iter=10000;
     
-    for(unsigned int i = 0; i < N_iter; i++)
+    System system = System();
+
+  for(unsigned int i = 0; i < N_iter; i++)
     {  
         system.verlet_scheme_iteration();
 
@@ -374,7 +415,7 @@ int main()
         }
 
     }
-    
+                
  
     return 0;
 }
